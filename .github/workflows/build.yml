@@ -18,8 +18,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Prepare Android SDK (use preinstalled)
+        run: |
+          set -x
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "SDK_ROOT=$SDK_ROOT"
+          ls "$SDK_ROOT" || true
+          SDKM=$(ls -d "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
+          echo "sdkmanager=$SDKM"
+          if [ -n "$SDKM" ]; then
+            yes 2>/dev/null | "$SDKM" --licenses > /dev/null 2>&1 || true
+            "$SDKM" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
+          fi
+          ls "$SDK_ROOT/platforms" || true
+          ls "$SDK_ROOT/build-tools" || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -27,17 +39,20 @@ jobs:
           gradle-version: '8.7'
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace --info
 
       - name: Collect APK
+        if: always()
         run: |
           mkdir -p out
-          find app/build/outputs/apk -name "*.apk" -exec cp {} out/ \;
+          find app/build/outputs/apk -name "*.apk" -exec cp {} out/ \; 2>/dev/null || true
           ls -la out
 
       - name: Upload artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: SmsGatewayForwarder-apk
           path: out/*.apk
+          if-no-files-found: warn
           retention-days: 30
