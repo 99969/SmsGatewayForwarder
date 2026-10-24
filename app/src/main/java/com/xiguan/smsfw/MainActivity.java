@@ -2,6 +2,7 @@ package com.xiguan.smsfw;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -136,6 +137,11 @@ public class MainActivity extends Activity {
         btnHealth.setOnClickListener(v -> doHealth());
         root.addView(btnHealth, matchWrap());
 
+        Button btnLsposed = new Button(this);
+        btnLsposed.setText("打开 LSPosed 管理器（看日志 / 改作用域）");
+        btnLsposed.setOnClickListener(v -> openLsposed());
+        root.addView(btnLsposed, matchWrap());
+
         tvResult = new TextView(this);
         tvResult.setTextSize(13f);
         tvResult.setTextColor(Color.parseColor("#333333"));
@@ -152,11 +158,16 @@ public class MainActivity extends Activity {
         root.addView(label("使用步骤"));
         TextView steps = new TextView(this);
         steps.setTextSize(13f);
-        steps.setText("1. 在 LSPosed 里启用本模块\n"
-                + "2. 作用域勾选「电话 / 电话服务」(com.android.phone)\n"
-                + "3. 重启手机（或重启电话进程）\n"
+        steps.setText("1. 在 LSPosed 里启用本模块（包名 com.xiguan.smsfw）\n"
+                + "2. 作用域必须勾选「电话 / 电话服务」(com.android.phone) —— 新装的模块作用域是空的，要重新勾\n"
+                + "3. 重启手机（或强制停止电话进程）\n"
                 + "4. 回到本页点「发送测试消息」验证\n"
-                + "5. 之后收到的短信会自动推送到网关");
+                + "5. 之后收到的短信会自动推送到网关\n\n"
+                + "排查：LSPosed 管理器 → 日志，搜 SmsFw。\n"
+                + "· 搜不到任何 SmsFw → 模块没被注入，作用域没勾或没重启\n"
+                + "· 有「命中类 InboundSmsHandler」但没有「收到短信 PDU」→ hook 没命中短信路径\n"
+                + "· 有「收到短信 PDU」但没有「准备转发」→ 短信解析失败\n"
+                + "· 有「准备转发」但没结果 → 网络/Token 问题");
         root.addView(steps, matchWrap());
     }
 
@@ -290,6 +301,19 @@ public class MainActivity extends Activity {
             final Gateway.Result r = Gateway.health(s);
             runOnUiThread(() -> tvResult.setText("/health → " + r.summary()));
         }, "sms-fw-health").start();
+    }
+
+    private void openLsposed() {
+        try {
+            Intent i = getPackageManager().getLaunchIntentForPackage("org.lsposed.manager");
+            if (i == null) {
+                toast("未找到 LSPosed 管理器");
+                return;
+            }
+            startActivity(i);
+        } catch (Throwable t) {
+            toast("打开失败: " + t);
+        }
     }
 
     private void toast(String msg) {

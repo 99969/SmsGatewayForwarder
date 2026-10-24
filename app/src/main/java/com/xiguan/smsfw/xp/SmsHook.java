@@ -1,5 +1,6 @@
 package com.xiguan.smsfw.xp;
 
+import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Telephony;
@@ -12,6 +13,7 @@ import com.xiguan.smsfw.SmsInfo;
 import com.xiguan.smsfw.XLog;
 
 import java.lang.reflect.Method;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XSharedPreferences;
@@ -19,16 +21,16 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * Hook 系统短信入口。
+ * Hook 系统短信入口（com.android.phone 进程里的 InboundSmsHandler）。
  * <p>
- * 与旧版实现的区别：
- * <ul>
- *   <li>不再限定某一个 Android 版本的构造器/方法签名，而是按「方法名 + 首参 Intent」模糊匹配，
- *       跨 Android 7 ~ 16 通用；</li>
- *   <li>不再调用 createPackageContext / 自建 ContentProvider 读配置，
- *       直接用 LSPosed 的 xposedsharedprefs 机制 + XSharedPreferences；</li>
- *   <li>所有异常就地吞掉并记日志，绝不让异常冒泡到电话进程（否则会连带系统电话崩溃）。</li>
- * </ul>
+ * 相比第一版增强了三件事，目的都是「万一不工作，能一眼看出卡在哪」：
+ * <ol>
+ *   <li>安装阶段就把类名、方法数、命中方法的完整签名打进日志；</li>
+ *   <li>加了一个探针：dispatchIntent 前 3 次被调用时无条件记一条 action，
+ *       用来区分「hook 没装上」和「hook 装上了但 action 不匹配」；</li>
+ *   <li>解析阶段逐段记录 PDU 段数 / format / 每段解析结果，
+ *       用来区分「没收到短信」和「收到了但解析失败」。</li>
+ * </ol>
  */
 public final class SmsHook {
 
@@ -38,6 +40,7 @@ public final class SmsHook {
     private static volatile boolean sInstalled = false;
     private static String sLastKey = "";
     private static long sLastAt = 0L;
+    private static final AtomicInteger sProbe = new AtomicInteger(0);
 
     private SmsHook() {
     }
@@ -50,26 +53,49 @@ public final class SmsHook {
         try {
             handlerClass = XposedHelpers.findClass(HANDLER_CLASS, cl);
         } catch (Throwable t) {
-            XLog.w("未找到 " + HANDLER_CLASS + "（本 ROM 可能不使用该实现）");
+            XLog.w("找不到类 " + HANDLER_CLASS + "，本 ROM 可能不使用该实现");
             return;
         }
 
-        Method target = null;
-        for (Method m : handlerClass.getDeclaredMethods()) {
-            if (!METHOD_NAME.equals(m.getName())) {
-                continue;
+        Method[] methods = handlerClass.getDeclaredMethods();
+        XLog.i("命中类 " + HANDLER_CLASS + "，声明方法数=" + methods.length);
+
+        Method primary = null;
+        for (Method m : methods) {
+            if (METHOD_NAME.equals(m.getName())) {
+                Class<?>[] ps = m.getParameterTypes();
+                if (ps.length >= 2 && ps[0] == Intent.class) {
+                    primary = m;
+                    break;
+                }
             }
+        }
+
+        if (primary != null) {
+            hookOne(primary);
+            sInstalled = true;
+            return;
+        }
+
+        // 兜底：方法改名了也不要紧，找「首参 Intent + 含 BroadcastReceiver」的方法
+        XLog.w("没有名为 " + METHOD_NAME + " 的方法，改用模糊匹配");
+        int count = 0;
+        for (Method m : methods) {
             Class<?>[] ps = m.getParameterTypes();
-            if (ps.length >= 2 && ps[0] == Intent.class) {
-                target = m;
-                break;
+            if (ps.length >= 2 && ps[0] == Intent.class && contains(ps, BroadcastReceiver.class)) {
+                hookOne(m);
+                count++;
             }
         }
-        if (target == null) {
-            XLog.w("未找到 " + METHOD_NAME + "(Intent, ...)");
-            return;
+        if (count > 0) {
+            sInstalled = true;
+            XLog.i("模糊匹配共 hook " + count + " 个方法");
+        } else {
+            XLog.w("模糊匹配也没找到可用方法，短信转发不可用");
         }
+    }
 
+    private static void hookOne(Method target) {
         XposedBridge.hookMethod(target, new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
@@ -78,31 +104,52 @@ public final class SmsHook {
                         onDispatchIntent((Intent) param.args[0]);
                     }
                 } catch (Throwable t) {
-                    // 绝不能把异常抛回电话进程
-                    XLog.e("解析短信失败", t);
+                    // 绝不能把异常抛回电话进程，否则可能连带系统电话一起崩
+                    XLog.e("处理短信失败", t);
                 }
             }
         });
+        StringBuilder sb = new StringBuilder();
+        for (Class<?> p : target.getParameterTypes()) {
+            sb.append(p.getSimpleName()).append(", ");
+        }
+        XLog.i("已 Hook " + target.getDeclaringClass().getSimpleName() + "#" + target.getName()
+                + "(" + sb + ")");
+    }
 
-        sInstalled = true;
-        XLog.i("Hook 就绪: " + HANDLER_CLASS + "#" + target.getName()
-                + " (" + target.getParameterTypes().length + " args)");
+    private static boolean contains(Class<?>[] arr, Class<?> type) {
+        for (Class<?> c : arr) {
+            if (c == type) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void onDispatchIntent(Intent intent) {
-        if (!Telephony.Sms.Intents.SMS_DELIVER_ACTION.equals(intent.getAction())) {
+        String action = intent.getAction();
+
+        // 探针：只记前 3 次，用来确认 hook 真的活了
+        if (sProbe.getAndIncrement() < 3) {
+            XLog.i("探针 dispatchIntent 被调用, action=" + action);
+        }
+
+        if (!Telephony.Sms.Intents.SMS_DELIVER_ACTION.equals(action)) {
             return;
         }
 
         Bundle extras = intent.getExtras();
         if (extras == null) {
+            XLog.w("SMS_DELIVER 但 intent 没有 extras");
             return;
         }
         Object[] pdus = (Object[]) extras.get("pdus");
         if (pdus == null || pdus.length == 0) {
+            XLog.w("SMS_DELIVER 但没有 pdus，extras=" + extras.keySet());
             return;
         }
         String format = extras.getString("format");
+        XLog.i("收到短信 PDU: 段数=" + pdus.length + " format=" + format);
 
         String sender = null;
         long timeMillis = 0L;
@@ -110,16 +157,10 @@ public final class SmsHook {
 
         for (Object pdu : pdus) {
             if (!(pdu instanceof byte[])) {
+                XLog.w("pdu 不是 byte[]，实际类型=" + (pdu == null ? "null" : pdu.getClass().getName()));
                 continue;
             }
-            SmsMessage sm;
-            try {
-                sm = (format != null)
-                        ? SmsMessage.createFromPdu((byte[]) pdu, format)
-                        : SmsMessage.createFromPdu((byte[]) pdu);
-            } catch (Throwable t) {
-                continue;
-            }
+            SmsMessage sm = parseOne((byte[]) pdu, format);
             if (sm == null) {
                 continue;
             }
@@ -136,7 +177,8 @@ public final class SmsHook {
             }
         }
 
-        if (sender == null && content.length() == 0) {
+        if (content.length() == 0 && (sender == null || sender.isEmpty())) {
+            XLog.w("短信解析结果为空（sender/content 都拿不到），放弃转发");
             return;
         }
 
@@ -148,18 +190,35 @@ public final class SmsHook {
         synchronized (SmsHook.class) {
             long now = System.currentTimeMillis();
             if (key.equals(sLastKey) && (now - sLastAt) < 3000L) {
+                XLog.i("重复投递，跳过");
                 return;
             }
             sLastKey = key;
             sLastAt = now;
         }
 
-        XLog.i("收到短信 from=" + info.sender + " slot=" + info.slotLabel()
+        XLog.i("准备转发 from=" + info.sender + " slot=" + info.slotLabel()
                 + " len=" + info.content.length());
 
         Thread worker = new Thread(() -> forward(info), "sms-fw-forward");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    private static SmsMessage parseOne(byte[] pdu, String format) {
+        if (format != null) {
+            try {
+                return SmsMessage.createFromPdu(pdu, format);
+            } catch (Throwable t) {
+                XLog.w("createFromPdu(pdu," + format + ") 失败: " + t);
+            }
+        }
+        try {
+            return SmsMessage.createFromPdu(pdu);
+        } catch (Throwable t) {
+            XLog.w("createFromPdu(pdu) 失败: " + t);
+        }
+        return null;
     }
 
     private static void forward(SmsInfo info) {
@@ -169,7 +228,7 @@ public final class SmsHook {
             sp.reload();
             s = Settings.load(sp);
         } catch (Throwable t) {
-            XLog.e("读取模块配置失败（检查 LSPosed 里是否已给本模块开启 xposedsharedprefs 支持）", t);
+            XLog.e("读取模块配置失败（检查 LSPosed 是否已给本模块启用 xposedsharedprefs）", t);
             return;
         }
 
@@ -178,8 +237,7 @@ public final class SmsHook {
             return;
         }
         if (s.sourceEmpty) {
-            XLog.w("读到的配置为空：请确认 LSPosed 里已给本模块开启作用域并重启，"
-                    + "以及 App 里已点过「保存配置」。将按默认值继续发送。");
+            XLog.w("读到的配置为空：请确认 App 里点过「保存配置」，并在 LSPosed 里重启过作用域。将按默认值继续发送。");
         }
         if (s.token == null || s.token.trim().isEmpty()) {
             XLog.w("API Token 为空，网关大概率返回 401。请先在 App 里填入 Token。");

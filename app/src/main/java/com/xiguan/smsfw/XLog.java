@@ -4,50 +4,36 @@ import android.util.Log;
 
 /**
  * 日志：同时写 logcat 和 Xposed/LSPosed 日志。
- * XposedBridge 只在被注入的进程里存在，普通 App 进程调用会抛 NoClassDefFoundError，
- * 因此全部包在 try/catch 里。
+ * <p>
+ * 这里故意不用 Class.forName 做能力探测 —— 探测失败会导致 XposedBridge.log 永远不被调用，
+ * 于是「模块到底有没有被注入」就完全看不出来了。直接 try/catch 调用，
+ * 普通 App 进程里会抛 NoClassDefFoundError，被吞掉即可。
  */
 public final class XLog {
-
-    private static final boolean XPOSED;
-
-    static {
-        boolean ok;
-        try {
-            Class.forName("de.robv.android.xposed.XposedBridge", false, XLog.class.getClassLoader());
-            ok = true;
-        } catch (Throwable t) {
-            ok = false;
-        }
-        XPOSED = ok;
-    }
 
     private XLog() {
     }
 
     public static void i(String msg) {
         Log.i(Const.TAG, msg);
-        xposed(Log.INFO, msg);
+        toXposed("I", msg);
     }
 
     public static void w(String msg) {
         Log.w(Const.TAG, msg);
-        xposed(Log.WARN, msg);
+        toXposed("W", msg);
     }
 
     public static void e(String msg, Throwable t) {
         Log.e(Const.TAG, msg, t);
-        xposed(Log.ERROR, msg + "\n" + Log.getStackTraceString(t));
+        toXposed("E", msg + "\n" + Log.getStackTraceString(t));
     }
 
-    private static void xposed(int priority, String msg) {
-        if (!XPOSED) {
-            return;
-        }
+    private static void toXposed(String level, String msg) {
         try {
-            de.robv.android.xposed.XposedBridge.log("[SmsFw] " + msg);
+            de.robv.android.xposed.XposedBridge.log("[SmsFw][" + level + "] " + msg);
         } catch (Throwable ignored) {
-            // ignore
+            // 普通 App 进程里没有 XposedBridge，忽略
         }
     }
 }
