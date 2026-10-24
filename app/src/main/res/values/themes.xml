@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 只用系统内置主题，不引入 AppCompat / Material 库，
+         避免旧版第三方主题库在新 Android 上包装 Resources 导致启动崩溃 -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">#FF3F51B5</item>
+        <item name="android:colorPrimaryDark">#FF303F9F</item>
+        <item name="android:colorAccent">#FF3F51B5</item>
+    </style>
+</resources>

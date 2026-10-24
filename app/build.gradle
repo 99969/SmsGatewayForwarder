@@ -1,0 +1,76 @@
+plugins {
+    id 'com.android.application'
+}
+
+def ksFile = rootProject.file('keystore/release.jks')
+
+android {
+    namespace 'com.xiguan.smsfw'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.xiguan.smsfw"
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+        resConfigs "zh", "en"
+    }
+
+    signingConfigs {
+        release {
+            if (ksFile.exists()) {
+                storeFile ksFile
+                storePassword 'smsfw2026'
+                keyAlias 'smsfw'
+                keyPassword 'smsfw2026'
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            if (ksFile.exists()) {
+                signingConfig signingConfigs.release
+            }
+        }
+        release {
+            // 不做代码混淆：模块类名、hook 入口必须保持原样，混淆只会带来无谓风险
+            minifyEnabled false
+            shrinkResources false
+            if (ksFile.exists()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/*.kotlin_module', 'META-INF/*.version']
+        }
+    }
+}
+
+dependencies {
+    // Xposed API 只在编译期可见，运行时由 LSPosed 提供
+    compileOnly files('libs/api-82.jar')
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.outputs.each { output ->
+            output.outputFileName.set("SmsGatewayForwarder-${variant.buildType}.apk")
+        }
+    }
+}
