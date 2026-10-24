@@ -177,6 +177,13 @@ public final class SmsHook {
             XLog.i("转发开关已关闭，跳过");
             return;
         }
+        if (s.sourceEmpty) {
+            XLog.w("读到的配置为空：请确认 LSPosed 里已给本模块开启作用域并重启，"
+                    + "以及 App 里已点过「保存配置」。将按默认值继续发送。");
+        }
+        if (s.token == null || s.token.trim().isEmpty()) {
+            XLog.w("API Token 为空，网关大概率返回 401。请先在 App 里填入 Token。");
+        }
         if (s.shouldSkip(info.content)) {
             XLog.i("命中关键词过滤规则，跳过");
             return;

@@ -29,6 +29,9 @@ public final class Settings {
     /** true = 命中关键词就不转发；false = 只有命中关键词才转发 */
     public boolean filterBlock = true;
 
+    /** 读到的配置是否为空（用于诊断 xposedsharedprefs 是否生效） */
+    public boolean sourceEmpty = true;
+
     private Settings() {
     }
 
@@ -51,6 +54,7 @@ public final class Settings {
         if (all == null) {
             return s;
         }
+        s.sourceEmpty = all.isEmpty();
 
         s.enable = bool(all, Const.K_ENABLE, s.enable);
         s.gateway = str(all, Const.K_GATEWAY, s.gateway);
