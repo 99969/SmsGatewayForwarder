@@ -17,8 +17,8 @@ public final class Const {
     /** cmcc-message-gateway 默认地址（Cloudflare Workers） */
     public static final String DEF_GATEWAY = "https://cmcc-message-gateway.hello-web.workers.dev";
 
-    /** 默认 API Token */
-    public static final String DEF_TOKEN = "2685be966bbc6bc6f8ebf93843950c089ecbb1ac88dd57e86033fd1b61cfea8c";
+    /** 默认 API Token：故意留空，Token 属于密钥，不写进代码/仓库，装好后在界面里填一次 */
+    public static final String DEF_TOKEN = "";
 
     public static final String DEF_TITLE_TPL = "短信 · {sender}";
     public static final String DEF_BODY_TPL = "{content}\n时间: {time}\n卡槽: {slot}";

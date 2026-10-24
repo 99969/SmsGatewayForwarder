@@ -89,8 +89,8 @@ public class MainActivity extends Activity {
         etGateway.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
         root.addView(etGateway, matchWrap());
 
-        root.addView(label("API Token（走 ?token= 鉴权）"));
-        etToken = field(Const.DEF_TOKEN, false);
+        root.addView(label("API Token（必填，走 ?token= 鉴权）"));
+        etToken = field("在此填入网关的 API Token", false);
         root.addView(etToken, matchWrap());
 
         root.addView(label("标题模板"));
@@ -233,6 +233,10 @@ public class MainActivity extends Activity {
         swFilter.setChecked(s.filterEnable);
         etKeywords.setText(s.filterKeywords);
         swBlock.setChecked(s.filterBlock);
+
+        if (s.token == null || s.token.trim().isEmpty()) {
+            tvResult.setText("提示：请先填入网关的 API Token，再点「发送测试消息」。");
+        }
     }
 
     private boolean save(boolean toastIt) {
